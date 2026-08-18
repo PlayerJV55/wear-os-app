@@ -1,0 +1,455 @@
+name: Build Wear OS Flashlight APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Gerar arquivos do projeto
+        run: |
+          mkdir -p app/src/main/java/com/example/wearflashlight
+
+          cat > settings.gradle.kts << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "WearFlashlight"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat > gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          EOF
+
+          cat > app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.wearflashlight"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.wearflashlight"
+                  minSdk = 30
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  debug {
+                      isDebuggable = false
+                      isMinifyEnabled = true
+                      proguardFiles(
+                          getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+                      )
+                  }
+                  release {
+                      isMinifyEnabled = true
+                      proguardFiles(
+                          getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+                      )
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              buildFeatures {
+                  buildConfig = false
+              }
+          }
+
+          kotlin {
+              jvmToolchain(17)
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+          }
+          EOF
+
+          cat > app/proguard-rules.pro << 'EOF'
+          # Regras básicas - o app não usa reflexão nem libs externas complexas
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-feature
+                  android:name="android.hardware.type.watch"
+                  android:required="true" />
+
+              <uses-feature
+                  android:name="android.hardware.touchscreen"
+                  android:required="false" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@android:drawable/ic_menu_camera"
+                  android:label="Lanterna"
+                  android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+                  <meta-data
+                      android:name="com.google.android.wearable.standalone"
+                      android:value="true" />
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          mkdir -p app/src/main/res/layout
+
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/rootLayout"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#FFFFFF">
+
+              <TextView
+                  android:id="@+id/timerText"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_gravity="center"
+                  android:textSize="28sp"
+                  android:textStyle="bold"
+                  android:padding="8dp" />
+
+              <ScrollView
+                  android:id="@+id/settingsOverlay"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:background="#DD000000"
+                  android:visibility="gone">
+
+                  <LinearLayout
+                      android:id="@+id/settingsContainer"
+                      android:orientation="vertical"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:paddingTop="20dp"
+                      android:paddingBottom="20dp" />
+
+              </ScrollView>
+
+          </FrameLayout>
+          EOF
+
+          cat > app/src/main/java/com/example/wearflashlight/MainActivity.kt << 'EOF'
+          package com.example.wearflashlight
+
+          import android.app.Activity
+          import android.content.Context
+          import android.content.SharedPreferences
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.os.CountDownTimer
+          import android.view.View
+          import android.view.WindowManager
+          import android.widget.CompoundButton
+          import android.widget.FrameLayout
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+
+              data class ColorOption(val name: String, val color: Int)
+
+              private val colorOptions = listOf(
+                  ColorOption("Branco", Color.parseColor("#FFFFFF")),
+                  ColorOption("Vermelho", Color.parseColor("#FF0000")),
+                  ColorOption("Verde", Color.parseColor("#00FF00")),
+                  ColorOption("Azul", Color.parseColor("#0000FF")),
+                  ColorOption("Radar", Color.parseColor("#FFB300")),
+                  ColorOption("Ultravioleta", Color.parseColor("#8F00FF")),
+                  ColorOption("Cinza", Color.parseColor("#808080")),
+                  ColorOption("Preto", Color.parseColor("#000000"))
+              )
+
+              private val timerOptions = listOf(0, 1, 3, 5, 10, 15, 20)
+
+              private lateinit var prefs: SharedPreferences
+              private lateinit var rootLayout: FrameLayout
+              private lateinit var timerText: TextView
+              private lateinit var settingsOverlay: ScrollView
+
+              private var countDownTimer: CountDownTimer? = null
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  prefs = getSharedPreferences("flashlight_prefs", Context.MODE_PRIVATE)
+
+                  window.addFlags(
+                      WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN
+                  )
+                  window.attributes = window.attributes.apply { screenBrightness = 1f }
+
+                  setContentView(R.layout.activity_main)
+
+                  rootLayout = findViewById(R.id.rootLayout)
+                  timerText = findViewById(R.id.timerText)
+                  settingsOverlay = findViewById(R.id.settingsOverlay)
+
+                  buildSettingsUI()
+                  applyColor(getSavedColorName())
+                  updateTimerVisibility()
+
+                  rootLayout.setOnLongClickListener {
+                      toggleSettings()
+                      true
+                  }
+
+                  settingsOverlay.setOnLongClickListener {
+                      toggleSettings()
+                      true
+                  }
+
+                  startAutoCloseTimerIfNeeded()
+              }
+
+              private fun getSavedColorName(): String =
+                  prefs.getString("color", "Branco") ?: "Branco"
+
+              private fun getSavedTimerSeconds(): Int =
+                  prefs.getInt("timerSeconds", 0)
+
+              private fun getSavedShowTimer(): Boolean =
+                  prefs.getBoolean("showTimer", true)
+
+              private fun getContrastColor(bgColor: Int): Int {
+                  val luminance = (0.299 * Color.red(bgColor) +
+                          0.587 * Color.green(bgColor) +
+                          0.114 * Color.blue(bgColor)) / 255
+                  return if (luminance > 0.5) Color.BLACK else Color.WHITE
+              }
+
+              private fun applyColor(name: String) {
+                  val option = colorOptions.find { it.name == name } ?: colorOptions[0]
+                  rootLayout.setBackgroundColor(option.color)
+                  timerText.setTextColor(getContrastColor(option.color))
+                  prefs.edit().putString("color", option.name).apply()
+              }
+
+              private fun updateTimerVisibility() {
+                  timerText.visibility = if (getSavedShowTimer()) View.VISIBLE else View.GONE
+              }
+
+              private fun startAutoCloseTimerIfNeeded() {
+                  countDownTimer?.cancel()
+                  val seconds = getSavedTimerSeconds()
+                  if (seconds <= 0) {
+                      timerText.text = ""
+                      return
+                  }
+                  countDownTimer = object : CountDownTimer(seconds * 1000L, 1000L) {
+                      override fun onTick(millisUntilFinished: Long) {
+                          val secondsLeft = (millisUntilFinished / 1000) + 1
+                          timerText.text = "$secondsLeft"
+                      }
+
+                      override fun onFinish() {
+                          finish()
+                      }
+                  }.start()
+              }
+
+              private fun toggleSettings() {
+                  settingsOverlay.visibility =
+                      if (settingsOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+              }
+
+              private fun buildSettingsUI() {
+                  val container = settingsOverlay.findViewById<LinearLayout>(R.id.settingsContainer)
+                  container.removeAllViews()
+
+                  val colorTitle = TextView(this).apply {
+                      text = "Cor"
+                      setTextColor(Color.WHITE)
+                      textSize = 14f
+                      setPadding(24, 16, 24, 8)
+                  }
+                  container.addView(colorTitle)
+
+                  var colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  container.addView(colorRow)
+                  var countInRow = 0
+
+                  colorOptions.forEach { option ->
+                      if (countInRow == 4) {
+                          colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                          container.addView(colorRow)
+                          countInRow = 0
+                      }
+                      val swatch = View(this).apply {
+                          layoutParams = LinearLayout.LayoutParams(56, 56).apply {
+                              setMargins(10, 10, 10, 10)
+                          }
+                          setBackgroundColor(option.color)
+                          setOnClickListener {
+                              applyColor(option.name)
+                              Toast.makeText(this@MainActivity, option.name, Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                      colorRow.addView(swatch)
+                      countInRow++
+                  }
+
+                  val timerTitle = TextView(this).apply {
+                      text = "Timer (segundos)"
+                      setTextColor(Color.WHITE)
+                      textSize = 14f
+                      setPadding(24, 28, 24, 8)
+                  }
+                  container.addView(timerTitle)
+
+                  var timerRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  container.addView(timerRow)
+                  var countInTimerRow = 0
+
+                  timerOptions.forEach { seconds ->
+                      if (countInTimerRow == 4) {
+                          timerRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                          container.addView(timerRow)
+                          countInTimerRow = 0
+                      }
+                      val label = if (seconds == 0) "Off" else "${seconds}s"
+                      val button = TextView(this).apply {
+                          text = label
+                          setTextColor(Color.WHITE)
+                          setPadding(24, 14, 24, 14)
+                          setBackgroundColor(Color.parseColor("#333333"))
+                          layoutParams = LinearLayout.LayoutParams(
+                              LinearLayout.LayoutParams.WRAP_CONTENT,
+                              LinearLayout.LayoutParams.WRAP_CONTENT
+                          ).apply { setMargins(8, 8, 8, 8) }
+                          setOnClickListener {
+                              prefs.edit().putInt("timerSeconds", seconds).apply()
+                              startAutoCloseTimerIfNeeded()
+                              Toast.makeText(this@MainActivity, label, Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                      timerRow.addView(button)
+                      countInTimerRow++
+                  }
+
+                  val switchRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(24, 28, 24, 16)
+                  }
+                  val switchLabel = TextView(this).apply {
+                      text = "Exibir timer na tela"
+                      setTextColor(Color.WHITE)
+                      textSize = 13f
+                      setPadding(0, 8, 8, 0)
+                  }
+                  val switchToggle = Switch(this).apply {
+                      isChecked = getSavedShowTimer()
+                      setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+                          prefs.edit().putBoolean("showTimer", isChecked).apply()
+                          updateTimerVisibility()
+                      }
+                  }
+                  switchRow.addView(switchLabel)
+                  switchRow.addView(switchToggle)
+                  container.addView(switchRow)
+
+                  val closeButton = TextView(this).apply {
+                      text = "Fechar configurações"
+                      setTextColor(Color.WHITE)
+                      textSize = 13f
+                      setPadding(24, 16, 24, 28)
+                      setOnClickListener { toggleSettings() }
+                  }
+                  container.addView(closeButton)
+              }
+
+              override fun onDestroy() {
+                  countDownTimer?.cancel()
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes necessários do Android SDK
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Compilar APK debug
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Publicar APK como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
